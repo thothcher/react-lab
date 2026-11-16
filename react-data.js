@@ -24,6 +24,15 @@ window.RFL = (function () {
     const NEW_DISH = { id: 6, name: 'Macarons', price: 8, inStock: true, category: 'desserts' };
     const API_PATH = '/api/v1/enterprise/dishes';
 
+    // The login lecture: two of the API's test accounts (as /auth/me answers) and the kitchen's open orders.
+    const STAFF = { accessToken: 'eyJhbGciOi…', user: { email: 'waiter@itstep.ge', displayName: 'Wato Waiter', role: 'Waiter' } };
+    const STUDENT = { accessToken: 'eyJhbGciOi…', user: { email: 'student@itstep.ge', displayName: 'Sandro Student', role: 'Student' } };
+    const ORDERS = [
+        { id: 1042, name: 'Table 4 · Coq au vin × 2', price: 48 },
+        { id: 1043, name: 'Table 7 · Ratatouille', price: 16 },
+        { id: 1044, name: 'Table 2 · Tarte Tatin × 3', price: 30 }
+    ];
+
     // ------------------------------------------------------------
     // ICONS for the new block types (names from the engine's icon set)
     // ------------------------------------------------------------
@@ -36,6 +45,7 @@ window.RFL = (function () {
         urlBlk: 'cloud', routeTable: 'sort', layoutOutlet: 'template', routeParam: 'key',
         toNumber: 'code', findById: 'search', searchParamsBlk: 'filter', linkNav: 'importIn',
         guard: 'shield', loginPost: 'lock',
+        submitForm: 'form', bearerHeader: 'key', authMe: 'cloud', saveSession: 'save', roleCheck: 'filter', staffQueue: 'sort',
         customHook: 'fn', apiHelper: 'module', proxyBlk: 'branch', serverBlk: 'disk',
         useDebounceBlk: 'clock', useLocalStorageBlk: 'save', useRefBlk: 'target',
         createCtx: 'plus', providerBlk: 'layers', useCtxBlk: 'download', dispatchBlk: 'upload', reducerBlk: 'fn',
@@ -58,6 +68,7 @@ window.RFL = (function () {
         grpStateR:    ['State & events', 'State და ივენთები'],
         grpEffect:    ['Effects & requests', 'ეფექტები და მოთხოვნები'],
         grpRoute:     ['Routing', 'როუტინგი'],
+        grpAuth:      ['Login & guards', 'ავტორიზაცია და დაცვა'],
         grpArch:      ['Hooks & architecture', 'ჰუკები და არქიტექტურა'],
         grpCtx:       ['Context & reducer', 'Context და reducer'],
         grpStore:     ['Store (Zustand)', 'Store (Zustand)'],
@@ -396,6 +407,68 @@ window.RFL = (function () {
             io: 'credentials in → { accessToken } out'
         },
 
+        // ---------- Login & guards ----------
+        submitForm: {
+            label: ['Form submit', 'ფორმის გაგზავნა'],
+            category: ['Event', 'ივენთი'], color: 'c-warning',
+            short: ['The guest presses "Sign in"', 'სტუმარი აჭერს „შესვლას“'],
+            long: 'A form has its own event: submit. It fires on the button and on Enter in any field. The handler stops the browser\'s own page reload with e.preventDefault() and reads the email and the password it keeps in state. A login starts here, in an event handler, never in an effect: the click causes it.',
+            file: 'src/pages/LoginPage.tsx',
+            raw: "async function handleSubmit(e: SubmitEvent<HTMLFormElement>) {\n  e.preventDefault(); // no page reload\n  // email and password come from two controlled inputs\n}",
+            mistake: 'Forgetting e.preventDefault(). The browser reloads the page, the state is gone, and the request never finishes.',
+            io: 'a click in → { email, password } out'
+        },
+        bearerHeader: {
+            label: ['Authorization: Bearer', 'Authorization: Bearer'],
+            category: ['Request', 'მოთხოვნა'], color: 'c-error',
+            short: ['The token travels with the request', 'token მოთხოვნას მიჰყვება'],
+            long: 'The server forgets everybody between two requests. So every request that needs a signed-in guest carries the proof in a header: Authorization: Bearer <token>. lib/api.ts adds it in one place, so no page has to remember it.',
+            file: 'src/lib/api.ts',
+            raw: "const headers = new Headers(init.headers);\nif (token) headers.set('Authorization', `Bearer ${token}`);",
+            mistake: 'headers.set("Authorization", token) without the word "Bearer " and its space. The API answers 401 as if no token was sent.',
+            io: 'a token in → a request with a header out'
+        },
+        authMe: {
+            label: ['GET /auth/me', 'GET /auth/me'],
+            category: ['Request', 'მოთხოვნა'], color: 'c-error',
+            short: ['Who am I? The token answers', 'ვინ ვარ? token პასუხობს'],
+            long: 'The login answer has a token, but not the name or the role. GET /auth/me with the token returns the profile: id, email, displayName, role. The role is what the guards and the menu read later.',
+            file: 'src/pages/LoginPage.tsx',
+            raw: "const me = await api<UserProfile>('/api/v1/auth/me', {}, auth.accessToken);\n// { id, email, displayName: 'Wato Waiter', role: 'Waiter', … }",
+            mistake: 'Reading the role out of the token in the browser and trusting it. The browser can be edited; only the server can check the signature.',
+            io: 'a token in → { email, displayName, role } out'
+        },
+        saveSession: {
+            label: ['Save the session', 'სესიის შენახვა'],
+            category: ['State', 'State'], color: 'c-warning',
+            short: ['The token and the user, kept in App', 'token და მომხმარებელი, App-ში'],
+            long: 'A session is two things: the token and who it belongs to. App keeps it in one state and writes a copy to localStorage, so F5 finds it again. The password is never kept. After saving, the login page sends the guest back to the page they wanted, with replace.',
+            file: 'src/App.tsx · src/pages/LoginPage.tsx',
+            raw: "onLogin({ token: auth.accessToken, user: toUser(me) });\n// App: setSession(s); localStorage.setItem('bistro.session', JSON.stringify(s));\nnavigate(from, { replace: true });",
+            mistake: 'localStorage.setItem("password", password). Any script on the page can read localStorage. Keep the token, never the password.',
+            io: 'token + user in → a session that survives F5'
+        },
+        roleCheck: {
+            label: ['Role check: roles={…}', 'როლის შემოწმება: roles={…}'],
+            category: ['Routing', 'როუტინგი'], color: 'c-error',
+            short: ['Signed in is not enough', 'შესული ყოფნა საკმარისი არ არის'],
+            long: 'The second question of the doorman. The first one was "is there a session?". This one is "is this role on the list?". A Student is signed in, but the kitchen queue is for waiters and kitchen staff. A wrong role goes to /forbidden, not to the login.',
+            file: 'src/routes/RequireAuth.tsx',
+            raw: "if (roles && !roles.includes(session.user.role)) {\n  return <Navigate to=\"/forbidden\" replace />;\n}\nreturn <Outlet />;",
+            mistake: 'Treating roles as a ladder ("an Admin can do everything"). On this API the order queue accepts Waiter and Kitchen only. Write the list the server really checks.',
+            io: 'a session in → the page, or /forbidden'
+        },
+        staffQueue: {
+            label: ['GET /orders/queue', 'GET /orders/queue'],
+            category: ['Request', 'მოთხოვნა'], color: 'c-error',
+            short: ['Data for the staff only', 'მონაცემი მხოლოდ პერსონალისთვის'],
+            long: 'The kitchen page asks the API for the open orders. The server checks two things on every call: a valid token (otherwise 401) and an allowed role (otherwise 403). This check is the real lock; the guard in the browser is only a sign on the door.',
+            file: 'src/pages/KitchenPage.tsx',
+            raw: "api<Order[]>('/api/v1/enterprise/orders/queue', { signal }, session.token)\n  .then(setOrders);\n// 401: no token or a bad one · 403: a valid token, a wrong role",
+            mistake: 'Hiding the button and calling it secure. Anybody can type the address or call the API from DevTools: only the server\'s 403 stops them.',
+            io: 'a request with a token in → the open orders (or 401 / 403)'
+        },
+
         // ---------- Hooks & architecture ----------
         customHook: {
             label: ['Custom hook: useApi', 'საკუთარი ჰუკი: useApi'],
@@ -561,7 +634,8 @@ window.RFL = (function () {
         { title: 'grpComp',   items: ['component', 'pageComp', 'props', 'jsxList', 'jsxCond', 'childComp'] },
         { title: 'grpStateR', items: ['useStateBlk', 'onClick', 'setStateBlk', 'mutateBlk', 'derived', 'liftState', 'callbackProp', 'controlledInput'] },
         { title: 'grpEffect', items: ['useEffectBlk', 'depsArray', 'abortCtl', 'fetchCall', 'jsonParse', 'cleanup'] },
-        { title: 'grpRoute',  items: ['urlBlk', 'routeTable', 'layoutOutlet', 'routeParam', 'searchParamsBlk', 'linkNav', 'guard', 'loginPost'] },
+        { title: 'grpRoute',  items: ['urlBlk', 'routeTable', 'layoutOutlet', 'routeParam', 'searchParamsBlk', 'linkNav'] },
+        { title: 'grpAuth',   items: ['submitForm', 'loginPost', 'bearerHeader', 'authMe', 'saveSession', 'guard', 'roleCheck', 'staffQueue'] },
         { title: 'grpArch',   items: ['customHook', 'apiHelper', 'proxyBlk', 'serverBlk', 'useDebounceBlk', 'useLocalStorageBlk', 'useRefBlk'] },
         { title: 'grpCtx',    items: ['createCtx', 'providerBlk', 'useCtxBlk', 'dispatchBlk', 'reducerBlk'] },
         { title: 'grpStore',  items: ['storeBlk', 'selectorBlk', 'persistBlk'] },
@@ -634,6 +708,9 @@ window.RFL = (function () {
             if (m) return { __kind: 'route', pattern: '/menu/:id', params: { id: m[1] }, page: 'DishPage', path };
             if (path === '/menu') return { __kind: 'route', pattern: '/menu', params: {}, page: 'MenuPage', path };
             if (path === '/kitchen') return { __kind: 'route', pattern: '/kitchen', params: {}, page: 'KitchenPage', path };
+            if (path === '/account') return { __kind: 'route', pattern: '/account', params: {}, page: 'AccountPage', path };
+            if (path === '/login') return { __kind: 'route', pattern: '/login', params: {}, page: 'LoginPage', path };
+            if (path === '/forbidden') return { __kind: 'route', pattern: '/forbidden', params: {}, page: 'ForbiddenPage', path };
             if (path === '/') return { __kind: 'route', pattern: '/', params: {}, page: 'HomePage', path };
             return { __kind: 'route', pattern: '*', params: {}, page: 'NotFoundPage', path };
         }
@@ -1095,10 +1172,103 @@ window.RFL = (function () {
                 run: (v, c) => {
                     c.inHandler = true;
                     c.requests++;
-                    c.session = { accessToken: 'eyJhbGciOi…', user: { email: 'waiter@itstep.ge', role: 'Waiter' } };
+                    c.session = h.clone(STAFF);
                     say(c, 'POST /api/v1/auth/login → 200 { accessToken, expiresIn: 120 }. The session is kept; the password is not.',
                            'POST /api/v1/auth/login → 200 { accessToken, expiresIn: 120 }. სესია ინახება; პაროლი არა.');
                     return { accessToken: 'eyJhbGciOi…', expiresIn: 120 };
+                },
+            },
+            submitForm: {
+                op: 'e.preventDefault()',
+                run: (v, c) => {
+                    c.inHandler = true;
+                    c.route = matchRoute('/login');
+                    c.url = { __kind: 'url', path: '/login', search: '' };
+                    say(c, 'The guest presses "Sign in". onSubmit runs, e.preventDefault() stops the browser\'s own reload, and the handler reads { email, password } from state.',
+                           'სტუმარი აჭერს „შესვლას“. onSubmit ეშვება, e.preventDefault() აჩერებს ბრაუზერის საკუთარ გადატვირთვას, handler-ი კი state-იდან კითხულობს { email, password }-ს.');
+                    return { email: 'waiter@itstep.ge', password: '••••••••' };
+                },
+            },
+            bearerHeader: {
+                op: 'Authorization: Bearer <token>',
+                run: (v, c) => {
+                    if (!c.session) throw new Error('There is no token to send. A token comes from POST /auth/login (or from the saved session): put the login before this block.');
+                    c.bearer = true;
+                    if (c.forbidden) {
+                        say(c, 'This line belongs to KitchenPage. The guest never reached that page, so nothing is sent.',
+                               'ეს ხაზი KitchenPage-ს ეკუთვნის. სტუმარი ამ გვერდამდე ვერ მივიდა, ამიტომ არაფერი იგზავნება.');
+                        return v;
+                    }
+                    say(c, 'Authorization: Bearer eyJhbGciOi… is added to the next request: the word "Bearer", a space, then the token.',
+                           'შემდეგ მოთხოვნას ემატება Authorization: Bearer eyJhbGciOi…: სიტყვა „Bearer“, ჰარი, მერე token.');
+                    return { headers: { Authorization: 'Bearer ' + c.session.accessToken } };
+                },
+            },
+            authMe: {
+                op: 'GET /api/v1/auth/me',
+                run: (v, c) => {
+                    c.requests++;
+                    if (!c.bearer) throw new Error('401 UNAUTHORIZED: "This endpoint requires a valid Bearer token. Log in at POST /api/v1/auth/login." The request left without the token: add the Authorization header before it.');
+                    const u = c.session.user;
+                    c.user = h.clone(u);
+                    c.pageTitle = 'My account · ' + u.displayName;
+                    say(c, 'GET /auth/me with the token → 200 { email: "' + u.email + '", displayName: "' + u.displayName + '", role: "' + u.role + '" }. Now the app knows who is signed in.',
+                           'GET /auth/me token-ით → 200 { email: "' + u.email + '", displayName: "' + u.displayName + '", role: "' + u.role + '" }. ახლა აპმა იცის, ვინ არის შესული.');
+                    return h.clone(u);
+                },
+            },
+            saveSession: {
+                op: 'setSession(…) · localStorage',
+                run: (v, c) => {
+                    if (!c.session) throw new Error('There is no session to save: nobody has signed in yet. Put POST /auth/login (and GET /auth/me) before this block.');
+                    c.saved = true;
+                    const user = c.user || c.session.user;
+                    const back = c.from || '/account';
+                    c.url = { __kind: 'url', path: back, search: '' };
+                    c.route = matchRoute(back);
+                    say(c, 'setSession({ token, user: "' + user.displayName + '" }) in App, and a copy in localStorage: F5 finds it again. The password is not kept. Then navigate("' + back + '", { replace: true }).',
+                           'setSession({ token, user: "' + user.displayName + '" }) App-ში და ასლი localStorage-ში: F5-ის შემდეგ ისევ იპოვის. პაროლი არ ინახება. მერე navigate("' + back + '", { replace: true }).');
+                    return { token: c.session.accessToken, user: h.clone(user) };
+                },
+            },
+            roleCheck: {
+                op: 'roles.includes(session.user.role)',
+                run: (v, c) => {
+                    if (!c.session) throw new Error('The role check reads the session, and there is none. The first question comes first: put the RequireAuth guard (is there a session?) before it.');
+                    const role = c.session.user.role;
+                    if (['Waiter', 'Kitchen'].indexOf(role) === -1) {
+                        c.forbidden = true;
+                        c.route = matchRoute('/forbidden');
+                        c.url = { __kind: 'url', path: '/forbidden', search: '' };
+                        c.pageTitle = '403 · Staff only';
+                        say(c, 'roles={["waiter", "kitchen"]} and this guest is a ' + role + ' → <Navigate to="/forbidden" replace />. Signed in, but not allowed: KitchenPage is never drawn.',
+                               'roles={["waiter", "kitchen"]}, ეს სტუმარი კი ' + role + '-ია → <Navigate to="/forbidden" replace />. შესულია, მაგრამ უფლება არ აქვს: KitchenPage არ იხატება.');
+                        return c.route;
+                    }
+                    say(c, 'The role is ' + role + ': it is on the list ["waiter", "kitchen"] → <Outlet /> draws the page.',
+                           'როლია ' + role + ': ის სიაშია ["waiter", "kitchen"] → <Outlet /> გვერდს ხატავს.');
+                    return v;
+                },
+            },
+            staffQueue: {
+                op: 'GET /api/v1/enterprise/orders/queue',
+                run: (v, c) => {
+                    if (c.forbidden) {
+                        c.lastArray = [];
+                        say(c, 'No request: KitchenPage was never drawn, so it never asked. The server would have said 403 anyway; the guard spared a useless request and showed a clear page.',
+                               'მოთხოვნა არ გაიგზავნა: KitchenPage არ დახატულა, ამიტომ არც უკითხავს. სერვერი მაინც 403-ს იტყოდა; guard-მა ზედმეტი მოთხოვნა აგვაცილა და გასაგები გვერდი აჩვენა.');
+                        return [];
+                    }
+                    c.requests++;
+                    if (!c.bearer) throw new Error('401 UNAUTHORIZED: "This endpoint requires a valid Bearer token." The guard let the page in (there is a session), but the request left without the token. Add the Authorization header before this request.');
+                    const role = c.session ? c.session.user.role : 'guest';
+                    if (['Waiter', 'Kitchen'].indexOf(role) === -1) throw new Error('403 FORBIDDEN: "Your token is valid, but your role is not allowed to access this endpoint." The guard let a ' + role + ' into the kitchen: it only asked "is there a session?". Ask for the role at the door too.');
+                    const a = h.clone(ORDERS);
+                    c.lastArray = a;
+                    c.pageTitle = 'Kitchen · ' + a.length + ' open orders';
+                    say(c, 'GET /orders/queue with a ' + role + '\'s token → 200, ' + a.length + ' open orders. The server checked the token and the role itself: that is the lock.',
+                           'GET /orders/queue ' + role + '-ის token-ით → 200, ' + a.length + ' ღია შეკვეთა. სერვერმა token-იც და როლიც თვითონ შეამოწმა: საკეტი ეს არის.');
+                    return a;
                 },
             },
 
@@ -1366,7 +1536,8 @@ window.RFL = (function () {
             component: (c) => { c.zone = 'body'; if (!c.named) c.name = c.types.includes('useCtxBlk') ? 'Header' : c.types.includes('selectorBlk') ? 'CartBadge' : 'DishList'; return []; },
             pageComp: (c) => {
                 c.zone = 'body'; c.exported = true; c.named = true;
-                c.name = c.types.includes('guard') ? 'KitchenPage' : c.types.includes('routeParam') ? 'DishPage' : 'MenuPage';
+                if (c.loginOpen) { c.slots.top.push('}'); c.loginOpen = false; }
+                c.name = c.types.includes('guard') ? 'KitchenPage' : c.types.includes('authMe') ? 'AccountPage' : c.types.includes('routeParam') ? 'DishPage' : 'MenuPage';
                 return [];
             },
             props: (c) => {
@@ -1378,6 +1549,7 @@ window.RFL = (function () {
             },
             jsxList: (c) => {
                 c.slot = 'jsx'; c.zone = 'body'; c.hasJsx = true;
+                if (c.v === 'orders') return ['return (', '  <ul>', '    {orders?.map((order) => (', '      <li key={order.id}>{order.table} · {order.items}</li>', '    ))}', '  </ul>', ');'];
                 const nullable = c.stateVar === 'dishes' && !c.inHook && listVar(c) === 'dishes' && !c.types.includes('jsxCond') && c.types.includes('useStateBlk') && !c.params;
                 return ['return (', '  <ul>', '    {' + listVar(c) + (nullable ? '?' : '') + '.map((dish) => (', '      <DishCard key={dish.id} dish={dish} />', '    ))}', '  </ul>', ');'];
             },
@@ -1393,6 +1565,7 @@ window.RFL = (function () {
                 c.slot = 'jsx'; c.hasJsx = true;
                 if (c.v === 'count') return ['return <span className="badge">{count}</span>;'];
                 if (c.v === 'dish') return ['return <h1>{dish.name}</h1>;'];
+                if (c.v === 'session') return ['return <h1>Hello, {session.user.displayName}</h1>;'];
                 if (c.v === 'total' || c.hasDerived) return ['return <p>{count} dishes · ${total}</p>;'];
                 return ['return <main>{/* what this component draws */}</main>;'];
             },
@@ -1452,11 +1625,49 @@ window.RFL = (function () {
                 c.slot = 'top';
                 if (c.guardDone) return ['// after the login the same guard runs again and lets the page through'];
                 c.guardDone = true;
-                return ['', '// RequireAuth.tsx', 'if (!session) return <Navigate to="/login" replace state={{ from: location.pathname }} />;', 'return <Outlet />;'];
+                const lines = ['', '// RequireAuth.tsx', 'if (!session) return <Navigate to="/login" replace state={{ from: location.pathname }} />;'];
+                if (!c.types.includes('roleCheck')) lines.push('return <Outlet />;');
+                return lines;
             },
             loginPost: (c) => {
                 c.slot = 'top';
+                if (c.loginOpen) return ['  const auth = await api<AuthResponse>(\'/api/v1/auth/login\', {', '    method: \'POST\',', '    body: JSON.stringify({ email, password }),', '  });'];
                 return ['', '// LoginPage.tsx, in the submit handler', 'const tokens = await api<AuthTokens>(\'/api/v1/auth/login\', { method: \'POST\', body: { email, password } });', 'navigate(from, { replace: true });'];
+            },
+            submitForm: (c) => {
+                c.slot = 'top'; c.loginOpen = true;
+                return ['', '// LoginPage.tsx', 'async function handleSubmit(e: SubmitEvent<HTMLFormElement>) {', '  e.preventDefault(); // no page reload'];
+            },
+            bearerHeader: (c) => {
+                c.slot = 'top';
+                return c.loginOpen ? ['  // lib/api.ts puts the token in a header: Authorization: Bearer <token>']
+                    : ['', '// lib/api.ts', 'if (token) headers.set(\'Authorization\', `Bearer ${token}`);'];
+            },
+            authMe: (c) => {
+                c.slot = 'top';
+                return c.loginOpen ? ['  const me = await api<UserProfile>(\'/api/v1/auth/me\', {}, auth.accessToken);']
+                    : ['const me = await api<UserProfile>(\'/api/v1/auth/me\', {}, token);'];
+            },
+            saveSession: (c) => {
+                c.slot = 'top'; c.v = 'session';
+                if (c.loginOpen) {
+                    c.loginOpen = false;
+                    return ['  onLogin({ token: auth.accessToken, user: toUser(me) }); // App keeps it, with a copy in localStorage', '  navigate(from, { replace: true });', '}'];
+                }
+                return ['localStorage.setItem(\'bistro.session\', JSON.stringify(session));'];
+            },
+            roleCheck: (c) => {
+                c.slot = 'top';
+                return ['if (roles && !roles.includes(session.user.role)) {', '  return <Navigate to="/forbidden" replace />;', '}', 'return <Outlet />;'];
+            },
+            staffQueue: (c) => {
+                c.slots.hooks.push('const [orders, setOrders] = useState<Order[] | null>(null);', 'const [error, setError] = useState<number | null>(null);');
+                c.effect = true; c.zone = 'effect'; c.deps = 'session.token'; c.v = 'orders'; c.stateVar = 'orders';
+                return ['const controller = new AbortController();',
+                        'api<Order[]>(\'/api/v1/enterprise/orders/queue\', { signal: controller.signal }, session.token)',
+                        '  .then(setOrders)',
+                        '  .catch((e: ApiError) => { if (!controller.signal.aborted) setError(e.status); }); // 401 or 403',
+                        'return () => controller.abort();'];
             },
 
             customHook: (c) => {
@@ -1511,7 +1722,8 @@ window.RFL = (function () {
         { id: 'components',   short: ['Components', 'კომპონენტები'], title: ['Components, JSX, props', 'კომპონენტები, JSX, props'] },
         { id: 'state',        short: ['State', 'State'], title: ['State and events', 'State და ივენთები'] },
         { id: 'effects',      short: ['Effects', 'ეფექტები'], title: ['Effects and data from the API', 'ეფექტები და მონაცემი API-დან'] },
-        { id: 'routing',      short: ['Routing', 'როუტინგი'], title: ['Routing and login', 'როუტინგი და ავტორიზაცია'] },
+        { id: 'routing',      short: ['Routing', 'როუტინგი'], title: ['Routing: pages and addresses', 'როუტინგი: გვერდები და მისამართები'] },
+        { id: 'auth',         short: ['Login', 'ავტორიზაცია'], title: ['Login and guards', 'ავტორიზაცია და დაცული გვერდები'] },
         { id: 'architecture', short: ['Architecture', 'არქიტექტურა'], title: ['Architecture and custom hooks', 'არქიტექტურა და საკუთარი ჰუკები'] },
         { id: 'context',      short: ['Context', 'Context'], title: ['Context and reducer', 'Context და reducer'] },
         { id: 'store',        short: ['Store', 'Store'], title: ['Zustand store', 'Zustand store'] }
@@ -1698,8 +1910,32 @@ window.RFL = (function () {
             ctx: { urlPath: '/menu' },
             banner: ['Only the desserts were requested. F5 and a shared link give the same page.', 'მოთხოვნილია მხოლოდ დესერტები. F5 და გაზიარებული ბმული იმავე გვერდს იძლევა.']
         },
+
+        // ===== Login and guards =====
         {
-            id: 'routing-4', lec: 'routing',
+            id: 'auth-1', lec: 'auth',
+            title: ['Prove who you are', 'დაამტკიცე, ვინ ხარ'],
+            mission: ['A waiter signs in. Build the whole login in the order it happens: the form is sent, the credentials go out in a POST, the token comes back, the next request carries it to ask "who am I?", and the session is kept for later.',
+                      'მიმტანი შედის სისტემაში. ააწყე მთელი ავტორიზაცია იმ თანმიმდევრობით, როგორც ხდება: ფორმა იგზავნება, მონაცემები POST-ით მიდის, token ბრუნდება, შემდეგი მოთხოვნა მას „ვინ ვარ?“ კითხვასთან ერთად ატარებს და სესია მომავლისთვის ინახება.'],
+            hint: ['Form submit → POST /auth/login → Authorization: Bearer → GET /auth/me → Save the session → Page → React updates the DOM → Browser screen.',
+                   'ფორმის გაგზავნა → POST /auth/login → Authorization: Bearer → GET /auth/me → სესიის შენახვა → გვერდი → React აახლებს DOM-ს → ბრაუზერის ეკრანი.'],
+            expected: ['submitForm', 'loginPost', 'bearerHeader', 'authMe', 'saveSession', 'pageComp', 'reactRender', 'browser'],
+            banner: ['Two requests: the POST gave a token, the token got the name and the role. The password was never kept.', 'ორი მოთხოვნა: POST-მა token მოგვცა, token-მა კი სახელი და როლი. პაროლი არსად შენახულა.']
+        },
+        {
+            id: 'auth-2', lec: 'auth', fix: true,
+            title: ['A key left at home', 'სახლში დარჩენილი გასაღები'],
+            mission: ['A waiter is signed in and opens the kitchen. The guard lets them in, yet the order queue never loads. Run the flow, read the red line, and add the one block that is missing.',
+                      'მიმტანი შესულია და სამზარეულოს გვერდს ხსნის. guard უშვებს, მაგრამ შეკვეთების რიგი არ იტვირთება. გაუშვი ნაკადი, წაიკითხე წითელი ხაზი და დაამატე ერთი აკლებული ბლოკი.'],
+            hint: ['The server forgets everybody: every request has to show the token. Put Authorization: Bearer right before GET /orders/queue.',
+                   'სერვერს არავინ ახსოვს: ყოველმა მოთხოვნამ token უნდა აჩვენოს. GET /orders/queue-ს წინ ჩასვი Authorization: Bearer.'],
+            preset: ['urlBlk', 'routeTable', 'guard', 'pageComp', 'staffQueue', 'jsxList', 'reactRender', 'browser'],
+            expected: ['urlBlk', 'routeTable', 'guard', 'pageComp', 'bearerHeader', 'staffQueue', 'jsxList', 'reactRender', 'browser'],
+            ctx: { urlPath: '/kitchen', urlSearch: '', session: STAFF },
+            banner: ['The token went with the request, and the server said 200. A session in App is not enough: the server must see the proof.', 'token მოთხოვნას გაჰყვა და სერვერმა 200 თქვა. სესია App-ში საკმარისი არ არის: სერვერმა დადასტურება უნდა დაინახოს.']
+        },
+        {
+            id: 'auth-3', lec: 'auth',
             title: ['The doorman works twice', 'მცველი ორჯერ მუშაობს'],
             mission: ['A guest types /kitchen. There is no session, so the guard sends them to the login. After the login the guest returns to the page they wanted, and the same guard lets them in.',
                       'სტუმარი კრეფს /kitchen. სესია არ არის, ამიტომ მცველი მას login-ზე აგზავნის. Login-ის შემდეგ სტუმარი ბრუნდება სასურველ გვერდზე და იგივე მცველი მას უშვებს.'],
@@ -1708,6 +1944,18 @@ window.RFL = (function () {
             expected: ['urlBlk', 'routeTable', 'guard', 'loginPost', 'guard', 'pageComp', 'reactRender', 'browser'],
             ctx: { urlPath: '/kitchen', urlSearch: '' },
             banner: ['The guard is a sign on the door. The server checks the token again: that is the lock.', 'მცველი მხოლოდ ნიშანია კარზე. სერვერი token-ს ხელახლა ამოწმებს: საკეტი ის არის.']
+        },
+        {
+            id: 'auth-4', lec: 'auth', fix: true,
+            title: ['A student in the kitchen', 'სტუდენტი სამზარეულოში'],
+            mission: ['A Student is signed in and types /kitchen. The guard lets them in, the page asks for the order queue, and the server refuses. Run the flow, read the red line, and add the question the doorman forgot.',
+                      'სტუდენტი შესულია და კრეფს /kitchen-ს. guard უშვებს, გვერდი შეკვეთების რიგს ითხოვს, სერვერი კი უარს ამბობს. გაუშვი ნაკადი, წაიკითხე წითელი ხაზი და დაამატე კითხვა, რომელიც მცველს დაავიწყდა.'],
+            hint: ['"Is there a session?" is not enough. Put the Role check right after the RequireAuth guard.',
+                   '„არის სესია?“ საკმარისი არ არის. RequireAuth მცველის შემდეგ ჩასვი როლის შემოწმება.'],
+            preset: ['urlBlk', 'routeTable', 'guard', 'pageComp', 'bearerHeader', 'staffQueue', 'jsxList', 'reactRender', 'browser'],
+            expected: ['urlBlk', 'routeTable', 'guard', 'roleCheck', 'pageComp', 'bearerHeader', 'staffQueue', 'jsxList', 'reactRender', 'browser'],
+            ctx: { urlPath: '/kitchen', urlSearch: '', session: STUDENT },
+            banner: ['The Student stopped at the door with a clear page. The server\'s 403 stays the real lock; the guard only saves a useless request.', 'სტუდენტი კართან გაჩერდა და გასაგები გვერდი ნახა. რეალური საკეტი სერვერის 403 რჩება; guard მხოლოდ ზედმეტ მოთხოვნას გვაცილებს.']
         },
 
         // ===== Architecture =====
@@ -1867,6 +2115,13 @@ window.RFL = (function () {
         { id: 'x-route', diff: 3, title: ['A page for one dish', 'ერთი კერძის გვერდი'],
           desc: ['Address → route → param → Number → find', 'მისამართი → როუტი → param → Number → find'],
           chain: ['urlBlk', 'routeTable', 'layoutOutlet', 'routeParam', 'toNumber', 'findById', 'pageComp', 'reactRender', 'browser'] },
+        { id: 'x-login', diff: 3, title: ['A login, step by step', 'ავტორიზაცია, ნაბიჯ-ნაბიჯ'],
+          desc: ['Submit → POST → Bearer → /auth/me → session', 'Submit → POST → Bearer → /auth/me → სესია'],
+          chain: ['submitForm', 'loginPost', 'bearerHeader', 'authMe', 'saveSession', 'pageComp', 'reactRender', 'browser'] },
+        { id: 'x-staff', diff: 4, title: ['A page for the staff only', 'გვერდი მხოლოდ პერსონალისთვის'],
+          desc: ['Guard → role → page → Bearer → the queue', 'Guard → როლი → გვერდი → Bearer → რიგი'],
+          ctx: { urlPath: '/kitchen', urlSearch: '', session: STAFF },
+          chain: ['urlBlk', 'routeTable', 'guard', 'roleCheck', 'pageComp', 'bearerHeader', 'staffQueue', 'jsxList', 'reactRender', 'browser'] },
         { id: 'x-layers', diff: 4, title: ['The layers of one request', 'ერთი მოთხოვნის შრეები'],
           desc: ['Page → hook → lib → proxy → server', 'გვერდი → ჰუკი → lib → proxy → სერვერი'],
           chain: ['pageComp', 'customHook', 'apiHelper', 'fetchCall', 'proxyBlk', 'serverBlk', 'jsonParse', 'setStateBlk', 'jsxCond', 'jsxList', 'reactRender', 'browser'] },
